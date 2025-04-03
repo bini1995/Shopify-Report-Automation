@@ -11,11 +11,12 @@ from email import encoders
 from dotenv import load_dotenv
 import schedule
 import time
-import pytz  # To handle time zones
+import pytz
 import boto3
 from botocore.exceptions import NoCredentialsError
 import logging
 from collections import defaultdict
+import fcntl
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -50,23 +51,29 @@ SHOP_NAME = "shop-vydia"
 # Stakeholders
 STAKEHOLDERS = [
     "bini.taddesse@vydia.com",
-    #"commerce@vydia.com",
-    #"jessica.bryant@vydia.com",
-    #"jenna.gaudio@vydia.com",
+    "commerce@vydia.com",
+    "jessica.bryant@vydia.com",
+    "jenna.gaudio@vydia.com",
     #"karalee.ensign@vydia.com",
-    #"techservices@vydia.com"
+    #techservices@vydia.com"
 ]
 
 def get_date_range():
     """
-    Calculate the date range from last Friday 12:00 AM to this Friday 11:59 PM in the Shopify store's time zone.
+    Calculate the date range from the previous Friday 12:00 AM to the current Friday 11:59 PM
+    in the Shopify store's time zone.
     """
     store_timezone = pytz.timezone("America/New_York")
     now = datetime.now(store_timezone)
-    days_since_friday = (now.weekday() + 3) % 7
-    last_friday = now - timedelta(days=days_since_friday, hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond)
-    current_friday = last_friday + timedelta(days=7)
 
+    # Find the current Friday (4 corresponds to Friday in weekday())
+    days_until_current_friday = (4 - now.weekday()) % 7  # Distance to this Friday
+    current_friday = now + timedelta(days=days_until_current_friday)
+
+    # Find the previous Friday (last week's Friday)
+    last_friday = current_friday - timedelta(days=7)
+
+    # Return the date range in the required formats
     return {
         "created_at_min": last_friday.strftime("%Y-%m-%dT00:00:00%z"),
         "created_at_max": current_friday.strftime("%Y-%m-%dT23:59:59%z"),
@@ -89,6 +96,7 @@ def generate_report():
     # Fetch the date range
     date_range = get_date_range()
     print(f"Generating report for {date_range['start_date']} to {date_range['end_date']}")
+    print(f"API Date Range: {date_range['created_at_min']} to {date_range['created_at_max']}")
     start_date = date_range["start_date"]
     end_date = date_range["end_date"]
 
@@ -135,6 +143,7 @@ def generate_report():
     if products_response.status_code == 200:
         products_data = products_response.json().get('products', [])
         product_lookup = {product['id']: product for product in products_data}
+        print(f"Fetched {len(products_data)} products.")
     else:
         print(f"Error retrieving products: {products_response.status_code}")
         product_lookup = {}
@@ -143,7 +152,8 @@ def generate_report():
     if not valid_orders:
         print("No valid orders found in the specified date range.")
         report_df = pd.DataFrame([{
-            "Order ID": "No Orders",
+            "Product Title": "No Orders",
+            "Order ID": "N/A",
             "Order Date": "",
             "Customer Email": "",
             "Gross Sales": 0.0,
@@ -158,7 +168,11 @@ def generate_report():
             shipping_cost = float(order.get('total_shipping_price_set', {}).get('shop_money', {}).get('amount', 0))
             total_sales = gross_sales + shipping_cost
 
+            # Extract product titles
+            product_titles = ", ".join([item['title'] for item in order['line_items']])
+
             enriched_order = {
+                "Product Title": product_titles,
                 "Order ID": order['id'],
                 "Order Date": order['created_at'],
                 "Customer Email": order.get('email', 'N/A'),
@@ -182,7 +196,8 @@ def generate_report():
 
         # Add a totals row
         totals_row = {
-            "Order ID": "Total",
+            "Product Title": "Total",
+            "Order ID": "",
             "Order Date": "",
             "Customer Email": "",
             "Gross Sales": total_gross_sales,
@@ -207,6 +222,7 @@ def generate_report():
 
 
 def send_email_with_report():
+    print("send_email_with_report() called.")  # Debugging: Log function entry
     try:
         # Call the generate_report function and unpack its return values
         output_file_path, start_date, end_date = generate_report()  # Adjusted to unpack three values
@@ -230,7 +246,7 @@ def send_email_with_report():
 
         # Create email
         msg = MIMEMultipart()
-        msg["From"] = EMAIL_USER
+        msg["From"] = f"Tech Services <{EMAIL_USER}>"
         msg["To"] = ", ".join(STAKEHOLDERS)
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain"))
@@ -261,14 +277,22 @@ def send_email_with_report():
         print(f"Failed to send email: {e}")
 
 
-# Schedule the task to run at noon Eastern Time every Friday
+# Schedule the task to run at 9 AM Eastern Time every Friday
 eastern = pytz.timezone("US/Eastern")
-#schedule.every().friday.at("9:00").do(send_email_with_report)
-schedule.every(1).minute.do(send_email_with_report)
+schedule.every().friday.at("09:00").do(send_email_with_report)
+#schedule.every(2).minutes.do(send_email_with_report)
 
+def prevent_multiple_instances():
+    """Prevents multiple instances of the script from running."""
+    lock_file = open("/tmp/shopify_report.lock", "w")
+    try:
+        fcntl.lockf(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("Another instance of the script is already running.")
+        exit()
 
 if __name__ == "__main__":
-    print("Scheduler is running. Waiting for the next Friday at noon Eastern Time...")
+    print("Scheduler is running. Waiting for the next Friday at 9 AM Eastern Time...")
     while True:
         schedule.run_pending()
         time.sleep(60)
