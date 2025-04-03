@@ -32,7 +32,7 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 # AWS Credentials
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
-***REMOVED***_KEY = os.getenv("***REMOVED***_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_BUCKET_NAME = "shopify-report-automation"
 
@@ -40,13 +40,13 @@ S3_BUCKET_NAME = "shopify-report-automation"
 s3_client = boto3.client(
     's3',
     aws_access_key_id=AWS_ACCESS_KEY,
-    aws_secret_access_key=***REMOVED***_KEY,
+    aws_secret_access_key=AWS_SECRET_KEY,
     region_name=AWS_REGION
 )
 
 # Shopify Configuration
 SHOP_NAME = "shop-vydia"
-***REMOVED***
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 
 # Stakeholders
 STAKEHOLDERS = [
